@@ -11,6 +11,7 @@ use BrizyPlaceholdersTests\Sample\LoopPlaceholder;
 use BrizyPlaceholdersTests\Sample\Placeholder;
 use BrizyPlaceholdersTests\Sample\PlaceholderWrapper;
 use BrizyPlaceholdersTests\Sample\TestPlaceholder;
+use BrizyPlaceholdersTests\Sample\UniqueCounterPlaceholder;
 use PHPUnit\Framework\TestCase;
 use Prophecy\Argument;
 use Prophecy\PhpUnit\ProphecyTrait;
@@ -729,5 +730,23 @@ class ExtractorTest extends TestCase
         $this->assertCount(20, $contentPlaceholders[0]->getAttributes(), 'Should have 20 attributes');
     }
 
+    public function testExtractUniquePerOccurrencePlaceholders()
+    {
+        $registry = new Registry();
+        $registry->registerPlaceholderName('unique', function () {
+            return new UniqueCounterPlaceholder('unique');
+        });
+        $extractor = new Extractor($registry);
 
+        list($contentPlaceholders, $instancePlaceholders, $content) = $extractor->extract('{{unique}} {{unique}} {{unique key="a"}} {{unique key="a"}}');
+
+        $this->assertCount(3, $contentPlaceholders, 'Unique placeholders should not be merged');
+        $this->assertCount(3, $instancePlaceholders);
+
+        $uids = array_map(function ($placeholder) {
+            return $placeholder->getUid();
+        }, $contentPlaceholders);
+
+        $this->assertEquals("{$uids[0]} {$uids[1]} {$uids[2]} {$uids[2]}", $content);
+    }
 }

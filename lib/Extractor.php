@@ -62,25 +62,36 @@ final class Extractor implements ExtractorInterface
         $contentPlaceholders = [];
         $placeholderInstances = [];
         $replacements = [];  // placeholder string => UID for strtr
+        $uniqueOccurrences = [];  // [offset, ContentPlaceholder] replaced at their own position
 
         foreach ($placeholders as $placeholder) {
-            $tmpPlaceholder = new ContentPlaceholder(
-                $placeholder['name'],
-                $placeholder['original'],
-                $placeholder['attributes'] ? $this->getPlaceholderAttributes($placeholder['attributes']) : [],
-                $placeholder['content'] ?? ''
-            );
-            $pHash = $tmpPlaceholder->getUid();
-
             $instance = $this->registry->getPlaceholderSupportingName($placeholder['name']);
             // ignore unknown placeholders
             if (!$instance) {
                 continue;
             }
 
+            $tmpPlaceholder = new ContentPlaceholder(
+                $placeholder['name'],
+                $placeholder['original'],
+                $placeholder['attributes'] ? $this->getPlaceholderAttributes($placeholder['attributes']) : [],
+                $placeholder['content'] ?? ''
+            );
+
+            if ($instance instanceof UniquePerOccurrenceInterface && $instance->isUniquePerOccurrence($tmpPlaceholder)) {
+                $tmpPlaceholder->setUid(md5($tmpPlaceholder->getUid() . random_bytes(16)));
+                $uniqueOccurrences[] = [$placeholder['offset'], $tmpPlaceholder];
+            } else {
+                $replacements[$tmpPlaceholder->getPlaceholder()] = $tmpPlaceholder->getUid();
+            }
+
+            $pHash = $tmpPlaceholder->getUid();
             $placeholderInstances[$pHash] = $instance;
             $contentPlaceholders[$pHash] = $tmpPlaceholder;
-            $replacements[$tmpPlaceholder->getPlaceholder()] = $pHash;
+        }
+
+        if (!empty($uniqueOccurrences)) {
+            $content = $this->replaceOccurrences($content, $uniqueOccurrences);
         }
 
         // strtr: single pass, simultaneous matching (faster than str_replace for multiple replacements)
@@ -199,8 +210,46 @@ final class Extractor implements ExtractorInterface
         $placeholder['name'] = $this->getPlaceholderTokenValue($token);
         $placeholder['original'] = $token->getValue();
         $placeholder['attributes'] = $this->getPlaceholderAttrTokenValue($token);
+        $placeholder['offset'] = $token->getOffset();
 
         return $placeholder;
+    }
+
+    /**
+     * Replaces each occurrence with its own UID, at the position where it was extracted.
+     *
+     * @param string $content
+     * @param array $occurrences [offset, ContentPlaceholder]
+     *
+     * @return string
+     */
+    private function replaceOccurrences($content, array $occurrences)
+    {
+        usort($occurrences, function ($a, $b) {
+            return $a[0] <=> $b[0];
+        });
+
+        $parts = [];
+        $cursor = 0;
+        foreach ($occurrences as list($offset, $placeholder)) {
+            $original = $placeholder->getPlaceholder();
+            $length = strlen($original);
+
+            if (substr($content, $offset, $length) !== $original) {
+                $offset = strpos($content, $original, $cursor);
+            }
+
+            if ($offset === false || $offset < $cursor) {
+                continue;
+            }
+
+            $parts[] = substr($content, $cursor, $offset - $cursor);
+            $parts[] = $placeholder->getUid();
+            $cursor = $offset + $length;
+        }
+        $parts[] = substr($content, $cursor);
+
+        return implode('', $parts);
     }
 
     private function extractTokens($content)

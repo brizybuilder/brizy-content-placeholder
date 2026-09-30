@@ -9,8 +9,10 @@ use BrizyPlaceholders\Extractor;
 use BrizyPlaceholders\PlaceholderInterface;
 use BrizyPlaceholders\Registry;
 use BrizyPlaceholders\Replacer;
+use BrizyPlaceholdersTests\Sample\CounterPlaceholder;
 use BrizyPlaceholdersTests\Sample\LoopPlaceholder;
 use BrizyPlaceholdersTests\Sample\TestPlaceholder;
+use BrizyPlaceholdersTests\Sample\UniqueCounterPlaceholder;
 use PHPUnit\Framework\TestCase;
 use Prophecy\Argument;
 use Prophecy\PhpUnit\ProphecyTrait;
@@ -512,5 +514,93 @@ class ReplacerTest extends TestCase
             $this->assertStringNotContainsString($uid, $content, 'It should return the content with replaced placeholders');
         }
 
+    }
+
+    public function testRepeatingPlaceholderValueIsComputedOnce()
+    {
+        $placeholder = new CounterPlaceholder('counter');
+        $registry = new Registry();
+        $registry->registerPlaceholderName('counter', function () use ($placeholder) {
+            return $placeholder;
+        });
+        $replacer = new Replacer($registry);
+
+        $content = '{{counter}} {{counter}} {{counter}}';
+        $contentAfterReplace = $replacer->replacePlaceholders($content, new EmptyContext());
+
+        $this->assertEquals('value1 value1 value1', $contentAfterReplace);
+        $this->assertEquals(1, $placeholder->calls, 'The value should be computed once for identical placeholders');
+    }
+
+    public function testUniquePerOccurrencePlaceholderIsComputedForEachOccurrence()
+    {
+        $placeholder = new UniqueCounterPlaceholder('unique');
+        $registry = new Registry();
+        $registry->registerPlaceholderName('unique', function () use ($placeholder) {
+            return $placeholder;
+        });
+        $replacer = new Replacer($registry);
+
+        $content = '<a id="{{unique}}"></a><a id="{{unique}}"></a><a id="{{unique}}"></a>';
+        $contentAfterReplace = $replacer->replacePlaceholders($content, new EmptyContext());
+
+        $this->assertEquals('<a id="value1"></a><a id="value2"></a><a id="value3"></a>', $contentAfterReplace);
+        $this->assertEquals(3, $placeholder->calls);
+    }
+
+    public function testUniquePerOccurrenceIsDecidedPerPlaceholder()
+    {
+        $placeholder = new UniqueCounterPlaceholder('unique');
+        $registry = new Registry();
+        $registry->registerPlaceholderName('unique', function () use ($placeholder) {
+            return $placeholder;
+        });
+        $replacer = new Replacer($registry);
+
+        $content = '{{unique key="a"}} {{unique}} {{unique key="a"}} {{unique}}';
+        $contentAfterReplace = $replacer->replacePlaceholders($content, new EmptyContext());
+
+        $values = explode(' ', $contentAfterReplace);
+        $this->assertCount(4, $values);
+        $this->assertEquals($values[0], $values[2], 'Placeholders that are not unique should share the value');
+        $this->assertNotEquals($values[1], $values[3], 'Unique placeholders should get their own value');
+        $this->assertCount(3, array_unique($values));
+        $this->assertEquals(3, $placeholder->calls);
+    }
+
+    public function testUniqueAndSharedPlaceholdersMixed()
+    {
+        $shared = new CounterPlaceholder('shared');
+        $unique = new UniqueCounterPlaceholder('unique');
+        $registry = new Registry();
+        $registry->registerPlaceholderName('shared', function () use ($shared) {
+            return $shared;
+        });
+        $registry->registerPlaceholderName('unique', function () use ($unique) {
+            return $unique;
+        });
+        $replacer = new Replacer($registry);
+
+        $content = 'a{{shared}}b{{unique}}c{{shared}}d{{unique}}e{{unknown}}f{{unique}}';
+        $contentAfterReplace = $replacer->replacePlaceholders($content, new EmptyContext());
+
+        $this->assertEquals('avalue1bvalue1cvalue1dvalue2e{{unknown}}fvalue3', $contentAfterReplace);
+        $this->assertEquals(1, $shared->calls);
+        $this->assertEquals(3, $unique->calls);
+    }
+
+    public function testUniquePerOccurrencePlaceholderWithContent()
+    {
+        $unique = new UniqueCounterPlaceholder('block');
+        $registry = new Registry();
+        $registry->registerPlaceholderName('block', function () use ($unique) {
+            return $unique;
+        });
+        $replacer = new Replacer($registry);
+
+        $content = '{{block uid="1"}}x{{end_block}}|{{block uid="1"}}x{{end_block}}';
+        $contentAfterReplace = $replacer->replacePlaceholders($content, new EmptyContext());
+
+        $this->assertEquals('value1|value2', $contentAfterReplace);
     }
 }
